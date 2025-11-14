@@ -17,73 +17,49 @@ export default function App() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    let q;
-    if (cityFilter && cityFilter.trim() !== '') q = query(collection(db, 'temples'), where('city', '==', cityFilter));
-    else q = collection(db, 'temples');
+    const q = cityFilter.trim()
+      ? query(collection(db, 'temples'), where('city', '==', cityFilter))
+      : collection(db, 'temples');
 
     const unsub = onSnapshot(q, (snap) => {
       const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setTemples(arr);
-    }, (err) => {
-      console.error('Firestore snapshot error', err);
-    });
+    }, (err) => console.error(err));
 
     return () => unsub();
   }, [cityFilter]);
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-    return () => unsub();
-  }, []);
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-  const handleSelect = (t) => {
-    setSelected(t);
-    setDetailOpen(true);
-  };
+  const handleSelect = (t) => { setSelected(t); setDetailOpen(true); };
 
-  const handleSignIn = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-      // auth state listener will update user
-    } catch (err) {
-      console.error('Sign in error', err);
-      alert('Sign in failed: ' + err.message);
-    }
+  const signIn = async () => {
+    try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); alert(e.message); }
   };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-    } catch (err) {
-      console.error('Sign out error', err);
-    }
-  };
+  const signOutUser = async () => { try { await signOut(auth); } catch (e) {console.error(e);} };
 
   return (
     <div className="app-root">
       <header className="topbar">
-        <h1>Temple Discovery</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input placeholder="Filter by city (e.g., Pune)" value={cityFilter} onChange={e => setCityFilter(e.target.value)} />
+        <h1>DharmaDisha</h1>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input placeholder="Filter by city" value={cityFilter} onChange={e => setCityFilter(e.target.value)} />
           <button onClick={() => setAdminOpen(true)}>Admin</button>
-
           {user ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <img src={user.photoURL} alt="avatar" style={{ width:28, height:28, borderRadius:14 }} />
-              <span style={{ color: '#fff', fontSize: 14 }}>{user.displayName}</span>
-              <button onClick={handleSignOut}>Sign out</button>
-            </div>
+            <>
+              <img src={user.photoURL} alt="avatar" style={{ width: 28, height: 28, borderRadius: 14 }} />
+              <span style={{ color: '#fff' }}>{user.displayName}</span>
+              <button onClick={signOutUser}>Sign out</button>
+            </>
           ) : (
-            <button onClick={handleSignIn}>Sign in (Google)</button>
+            <button onClick={signIn}>Sign in (Google)</button>
           )}
         </div>
       </header>
 
       <main>
         <div className="map-area">
-          <MapView temples={temples} onSelectTemple={handleSelect} />
+          <MapView temples={temples} />
         </div>
 
         <aside className="sidebar">

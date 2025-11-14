@@ -9,7 +9,7 @@ import Papa from 'papaparse';
 Modal.setAppElement('#root');
 
 function emptySub() {
-  return { name: '', description: '', location: { lat: '', lng: '' }, images: [] };
+  return { name: '', description: '', location: { lat: '', lng: '' }, latitude: '', longitude: '', images: [] };
 }
 
 export default function AdminModal({ isOpen, onClose, user }) {
@@ -18,15 +18,17 @@ export default function AdminModal({ isOpen, onClose, user }) {
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [description, setDescription] = useState('');
+  const [sthana, setSthana] = useState(''); // optional
+  const [leela, setLeela] = useState('');   // optional
   const [files, setFiles] = useState(null);
   const [subTemples, setSubTemples] = useState([emptySub()]);
   const [saving, setSaving] = useState(false);
   const [csvProcessing, setCsvProcessing] = useState(false);
 
   useEffect(() => {
-    // reset when opened
     if (!isOpen) {
-      setName(''); setCity(''); setLat(''); setLng(''); setDescription(''); setFiles(null);
+      setName(''); setCity(''); setLat(''); setLng(''); setDescription('');
+      setSthana(''); setLeela(''); setFiles(null);
       setSubTemples([emptySub()]);
     }
   }, [isOpen]);
@@ -53,7 +55,11 @@ export default function AdminModal({ isOpen, onClose, user }) {
     setSubTemples(prev => {
       const next = [...prev];
       if (field === 'name' || field === 'description') next[idx][field] = value;
-      else if (field === 'lat' || field === 'lng') next[idx].location[field === 'lat' ? 'lat' : 'lng'] = value;
+      else if (field === 'lat' || field === 'lng') {
+        next[idx].location[field === 'lat' ? 'lat' : 'lng'] = value;
+        next[idx].latitude = field === 'lat' ? value : next[idx].latitude;
+        next[idx].longitude = field === 'lng' ? value : next[idx].longitude;
+      }
       return next;
     });
   };
@@ -63,30 +69,36 @@ export default function AdminModal({ isOpen, onClose, user }) {
     if (!user) { alert('You must be signed in to add temples'); return; }
     setSaving(true);
     try {
+      const latitude = parseFloat(lat) || 0;
+      const longitude = parseFloat(lng) || 0;
+
       const docRef = await addDoc(collection(db, 'temples'), {
         name,
         city,
-        location: { lat: parseFloat(lat), lng: parseFloat(lng) },
         description,
+        sthana,
+        leela,
         images: [],
+        location: { lat: latitude, lng: longitude },
+        latitude,
+        longitude,
         sub_temples: subTemples.map(s => ({
           name: s.name,
           description: s.description,
           location: { lat: parseFloat(s.location.lat || 0), lng: parseFloat(s.location.lng || 0) },
-          images: []
+          latitude: parseFloat(s.location.lat || 0),
+          longitude: parseFloat(s.location.lng || 0),
+          images: s.images || []
         })),
         createdBy: { uid: user.uid, email: user.email, name: user.displayName },
         createdAt: Date.now()
       });
 
-      // upload main images
+      // upload main images and update doc
       const mainUrls = await uploadImages(files, docRef.id, 'main/');
       if (mainUrls.length) {
         await updateDoc(doc(db, 'temples', docRef.id), { images: mainUrls });
       }
-
-      // Note: uploading sub-temple images via Admin UI would need file inputs per sub-temple.
-      // For now, sub-temple images are empty; can extend later.
 
       alert('Temple added successfully');
       onClose();
@@ -98,9 +110,7 @@ export default function AdminModal({ isOpen, onClose, user }) {
     }
   };
 
-  // -------- CSV Import in-browser (assumes columns: name,city,lat,lng,description,images,sub_temples)
-  // - images: optional semicolon-separated URLs or file names (file upload for images not supported in CSV)
-  // - sub_temples: optional JSON string array: [{"name":"x","lat":..,"lng":..,"description":".."}]
+  // CSV Import
   const handleCsvUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -112,40 +122,48 @@ export default function AdminModal({ isOpen, onClose, user }) {
         const rows = results.data;
         try {
           for (const r of rows) {
-            // parse fields
+            const latitude = parseFloat(r.lat || r.latitude || 0);
+            const longitude = parseFloat(r.lng || r.longitude || 0);
             const docData = {
               name: r.name || '',
               city: r.city || '',
-              location: { lat: parseFloat(r.lat || 0), lng: parseFloat(r.lng || 0) },
               description: r.description || '',
+              sthana: r.sthana || '',
+              leela: r.leela || '',
+              location: { lat: latitude, lng: longitude },
+              latitude,
+              longitude,
               images: [],
               sub_temples: []
             };
 
-            // images field: semicolon-separated URLs
             if (r.images) {
               const imgs = r.images.split(';').map(s => s.trim()).filter(Boolean);
               docData.images = imgs;
             }
 
-            // sub_temples: if provided as JSON string
             if (r.sub_temples) {
               try {
                 const subs = JSON.parse(r.sub_temples);
                 if (Array.isArray(subs)) {
-                  docData.sub_temples = subs.map(s => ({
-                    name: s.name || '',
-                    description: s.description || '',
-                    location: { lat: parseFloat(s.lat || s.location?.lat || 0), lng: parseFloat(s.lng || s.location?.lng || 0) },
-                    images: s.images || []
-                  }));
+                  docData.sub_temples = subs.map(s => {
+                    const subLat = parseFloat(s.lat || s.latitude || 0);
+                    const subLng = parseFloat(s.lng || s.longitude || 0);
+                    return {
+                      name: s.name || '',
+                      description: s.description || '',
+                      location: { lat: subLat, lng: subLng },
+                      latitude: subLat,
+                      longitude: subLng,
+                      images: Array.isArray(s.images) ? s.images : (s.images ? s.images.split(';').map(x => x.trim()) : [])
+                    };
+                  });
                 }
               } catch (err) {
                 console.warn('sub_temples JSON parse failed for row', r, err);
               }
             }
 
-            // add to Firestore
             await addDoc(collection(db, 'temples'), docData);
           }
           alert('CSV import complete');
@@ -164,7 +182,6 @@ export default function AdminModal({ isOpen, onClose, user }) {
     });
   };
 
-  // -------- UI (protected: require user)
   return (
     <Modal isOpen={isOpen} onRequestClose={onClose} className="modal" overlayClassName="overlay">
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -180,25 +197,13 @@ export default function AdminModal({ isOpen, onClose, user }) {
       ) : (
         <>
           <form onSubmit={handleSubmit}>
-            <label>Name
-              <input type="text" value={name} onChange={e => setName(e.target.value)} required />
-            </label>
-
-            <label>City
-              <input type="text" value={city} onChange={e => setCity(e.target.value)} required />
-            </label>
-
-            <label>Latitude
-              <input type="number" value={lat} onChange={e => setLat(e.target.value)} required />
-            </label>
-
-            <label>Longitude
-              <input type="number" value={lng} onChange={e => setLng(e.target.value)} required />
-            </label>
-
-            <label>Description
-              <textarea value={description} onChange={e => setDescription(e.target.value)} />
-            </label>
+            <label>Name<input type="text" value={name} onChange={e => setName(e.target.value)} required /></label>
+            <label>City<input type="text" value={city} onChange={e => setCity(e.target.value)} required /></label>
+            <label>Latitude<input type="number" value={lat} onChange={e => setLat(e.target.value)} required /></label>
+            <label>Longitude<input type="number" value={lng} onChange={e => setLng(e.target.value)} required /></label>
+            <label>Description<textarea value={description} onChange={e => setDescription(e.target.value)} /></label>
+            <label>Sthana<textarea value={sthana} onChange={e => setSthana(e.target.value)} /></label>
+            <label>Leela<textarea value={leela} onChange={e => setLeela(e.target.value)} /></label>
 
             <label>Images (upload)
               <input type="file" multiple accept="image/*" onChange={handleFiles} />
@@ -208,18 +213,10 @@ export default function AdminModal({ isOpen, onClose, user }) {
             <h3>Sub-temples</h3>
             {subTemples.map((s, idx) => (
               <div key={idx} style={{ border: '1px dashed #ddd', padding: 8, marginBottom: 8, borderRadius: 6 }}>
-                <label>Sub-temple Name
-                  <input type="text" value={s.name} onChange={e => handleSubChange(idx, 'name', e.target.value)} />
-                </label>
-                <label>Latitude
-                  <input type="number" value={s.location.lat} onChange={e => handleSubChange(idx, 'lat', e.target.value)} />
-                </label>
-                <label>Longitude
-                  <input type="number" value={s.location.lng} onChange={e => handleSubChange(idx, 'lng', e.target.value)} />
-                </label>
-                <label>Description
-                  <input type="text" value={s.description} onChange={e => handleSubChange(idx, 'description', e.target.value)} />
-                </label>
+                <label>Sub-temple Name<input type="text" value={s.name} onChange={e => handleSubChange(idx, 'name', e.target.value)} /></label>
+                <label>Latitude<input type="number" value={s.location.lat} onChange={e => handleSubChange(idx, 'lat', e.target.value)} /></label>
+                <label>Longitude<input type="number" value={s.location.lng} onChange={e => handleSubChange(idx, 'lng', e.target.value)} /></label>
+                <label>Description<input type="text" value={s.description} onChange={e => handleSubChange(idx, 'description', e.target.value)} /></label>
                 <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
                   <button type="button" onClick={() => handleRemoveSub(idx)}>Remove</button>
                   {idx === subTemples.length - 1 && <button type="button" onClick={handleAddSub}>Add another sub-temple</button>}
@@ -236,8 +233,8 @@ export default function AdminModal({ isOpen, onClose, user }) {
 
           <div>
             <h3>CSV Bulk Import</h3>
-            <p style={{ fontSize: 13 }}>Upload a CSV with header row. Supported columns: <code>name,city,lat,lng,description,images,sub_temples</code>.</p>
-            <p style={{ fontSize: 13 }}>Images should be semicolon-separated URLs. <code>sub_temples</code> should be a JSON string (array) with keys name,lat,lng,description,images (images array or semicolon string).</p>
+            <p style={{ fontSize: 13 }}>Upload a CSV with header row. Supported columns: <code>name,city,lat,lng,description,images,sub_temples,sthana,leela</code>.</p>
+            <p style={{ fontSize: 13 }}>Images should be semicolon-separated URLs. <code>sub_temples</code> should be a JSON string (array) with keys name,lat,lng,description,images.</p>
             <input type="file" accept=".csv" onChange={handleCsvUpload} />
             {csvProcessing && <div>Processing CSV...</div>}
           </div>
